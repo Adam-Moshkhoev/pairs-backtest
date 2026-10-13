@@ -31,12 +31,16 @@ def kline_url(symbol: str, interval: str, month: str) -> str:
 
 def funding_url(symbol: str, month: str) -> str:
     """Адрес zip-файла фандинга за месяц."""
-    ...
-    return f"{config.BASE_URL}/{symbol}/funding/{month}/{symbol}-funding-{month}.zip"
+    return f"{config.BASE_URL}/fundingRate/{symbol}/{symbol}-fundingRate-{month}.zip"
 
 def download_file(url: str, dest: Path) -> Path:
     """Скачать файл в dest. Если файл уже есть — не качать заново."""
     ...
+    if dest.exists():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(url, dest)
+    return dest
 
 
 def verify_checksum(zip_path: Path, checksum_path: Path) -> bool:
