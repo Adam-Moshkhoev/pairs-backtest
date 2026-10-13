@@ -47,9 +47,46 @@ def verify_checksum(zip_path: Path, checksum_path: Path) -> bool:
     actual_hash = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     return expected_hash == actual_hash
 
+def fetch_verified(url: str, dest: Path) -> bool:
+    """Скачать файл и его .CHECKSUM, проверить хеш. Если хеш не совпал — удалить файл."""
+    checksum_dest = dest.with_name(dest.name + ".CHECKSUM")
+    download_file(url, dest)                     # сам zip
+    download_file(url + ".CHECKSUM", checksum_dest)       # его отпечаток
+    if verify_checksum(dest, checksum_dest):
+        return True
+    dest.unlink()                               # повреждённый файл удаляем
+    return False
+
 def download_all() -> None:
     """Скачать все свечи и весь фандинг для всех символов и месяцев."""
-    ...
+    months = month_range(config.FIRST_MONTH, config.LAST_MONTH)              # из config
+    failed = []                                 # сюда — файлы, которые не прошли проверку
+
+    for symbol in [config.SYMBOL_A, config.SYMBOL_B]:                          # обе монеты из config
+        for month in months:
+            # 1. Свечи
+            url = kline_url(symbol, config.RAW_INTERVAL, month) # какой таймфрейм качаем? (см. config)
+            dest = config.RAW_DIR / "klines" / symbol / url.split("/")[-1]
+            ok = fetch_verified(url, dest)
+            print("OK  " if ok else "FAIL", dest.name)
+            if not ok:
+                failed.append(dest.name)
+
+            # 2. Фандинг — то же самое
+            url = funding_url(symbol, month)
+            dest = config.RAW_DIR / "funding" / symbol / url.split("/")[-1]
+            ok = fetch_verified(url, dest)
+            print("OK  " if ok else "FAIL", dest.name)
+            if not ok:
+                failed.append(dest.name)
+
+    # 3. Один месяц 5m — для проверки сборки 5m из 1m в prepare.py
+    url = kline_url(config.SYMBOL_A, "5m", config.FIRST_MONTH)
+    fetch_verified(url, config.RAW_DIR / "klines_5m_check" / url.split("/")[-1])
+
+    print(f"Готово. Не прошли проверку: {len(failed)}")
+    for name in failed:
+        print("  ", name)
 
 
 if __name__ == "__main__":
