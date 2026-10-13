@@ -8,7 +8,7 @@ import config
 
 def month_range(first: str, last: str) -> list[str]:
     """'2024-10', '2026-09' -> ['2024-10', '2024-11', ..., '2026-09']."""
-    ...
+
     year = int(first[:4])
     month = int(first[5:7])
     end_year = int(last[:4])
@@ -34,8 +34,6 @@ def funding_url(symbol: str, month: str) -> str:
     return f"{config.BASE_URL}/fundingRate/{symbol}/{symbol}-fundingRate-{month}.zip"
 
 def download_file(url: str, dest: Path) -> Path:
-    """Скачать файл в dest. Если файл уже есть — не качать заново."""
-    ...
     if dest.exists():
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -45,8 +43,9 @@ def download_file(url: str, dest: Path) -> Path:
 
 def verify_checksum(zip_path: Path, checksum_path: Path) -> bool:
     """Сравнить SHA-256 zip-файла с хешем из файла .CHECKSUM."""
-    ...
-
+    expected_hash = checksum_path.read_text().split()[0]
+    actual_hash = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    return expected_hash == actual_hash
 
 def download_all() -> None:
     """Скачать все свечи и весь фандинг для всех символов и месяцев."""
