@@ -52,3 +52,9 @@ def check_bars(df:pl.DataFrame,step_ms:int)->dict:
         "gaps": gaps.height,
         "bad_ohlc": bad_ohlc.height
     }
+
+def align_pair(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
+    """Соединить две монеты по open_time: столбцы A с суффиксом _a, B с суффиксом _b."""
+    a = a.rename({c: f"{c}_a" for c in a.columns if c != "open_time"})
+    b = b.rename({c: f"{c}_b" for c in b.columns if c != "open_time"})
+    return a.join(b, on="open_time", how="inner").sort("open_time")
