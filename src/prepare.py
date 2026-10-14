@@ -82,3 +82,33 @@ def resample(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
         .rename({"bucket": "open_time"})
         .sort("open_time")
     )
+
+def build_dataset() -> None:
+    """Zip-файлы -> проверенные и соединённые пары 1m и 5m в data/processed."""
+    step_1m, step_5m = config.STEP_MS["1m"], config.STEP_MS["5m"]
+
+    # 1. Загрузка
+    a = load_klines(config.SYMBOL_A)
+    b = load_klines(config.SYMBOL_B)
+
+    # 2. Проверка
+    print(config.SYMBOL_A, check_bars(a, step_1m))
+    print(config.SYMBOL_B, check_bars(b, step_1m))
+
+    # 3. Флаг торговли для минуток
+    a = a.with_columns((pl.col("volume") > 0).cast(pl.UInt32).alias("n_traded"))
+    b = b.with_columns((pl.col("volume") > 0).cast(pl.UInt32).alias("n_traded"))
+
+    # 4–5. Пары
+    pair_1m = align_pair(a, b)
+    pair_5m = align_pair(resample(a, step_5m), resample(b, step_5m))
+
+    # 6. Сохранение
+    config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    pair_1m.write_parquet(config.PROCESSED_DIR / "pair_1m.parquet")
+    pair_5m.write_parquet(config.PROCESSED_DIR / "pair_5m.parquet")
+    print("1m:", pair_1m.shape, "| 5m:", pair_5m.shape)
+
+
+if __name__ == "__main__":
+    build_dataset()
