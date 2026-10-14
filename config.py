@@ -18,6 +18,10 @@ OOS_START = "2025-10-01" # до этой даты подбор, после — �
 # Сделка и издержки
 NOTIONAL = 10_000.0      # USDT на одну ногу
 CAPITAL = 20_000.0
-TAKER_FEE_BPS = 5.0
+FEE_TIER_BPS = {
+    'regular' : {"maker": 2.0, "taker": 5.0},
+    'vip4'     : {"maker": 1.0, "taker": 3.0},
+    'vip7'    : {"maker": 0.4, "taker": 2.2}
+}
 MAKER_FEE_BPS = -0.25    # rebate; единицу уточнить у Георгия
 SLIPPAGE_BPS = 1.0
