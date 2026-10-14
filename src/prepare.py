@@ -26,3 +26,11 @@ def read_kline_zip(path:Path)-> pl.DataFrame:
         pl.col("close").cast(pl.Float64),
         pl.col("volume").cast(pl.Float64)
     )
+
+def load_klines(symbol:str, interval:str = config.RAW_INTERVAL)-> pl.DataFrame:
+    """Все месяцы одной монеты -> одна таблица, отсортированная по времени."""
+    folder = config.RAW_DIR/"klines"/symbol
+    paths = sorted(folder.glob(f"{symbol}-{interval}-*.zip"))
+    df = pl.concat(read_kline_zip(path) for path in paths).sort("open_time")
+    return df.sort("open_time")
+ 
