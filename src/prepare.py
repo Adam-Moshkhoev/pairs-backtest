@@ -35,22 +35,26 @@ def load_klines(symbol:str, interval:str = config.RAW_INTERVAL)-> pl.DataFrame:
     return df.sort("open_time")
 
 
-def check_bars(df:pl.DataFrame,step_ms:int)->dict:
-    """Проверка качества: дубли, пропуски, некорректные свечи."""
+def check_bars(df: pl.DataFrame, step_ms: int) -> dict:
+    """Проверка качества: дубли, пропуски, некорректные свечи, минуты без торговли."""
     n_rows = df.height
     n_duplicates = n_rows - df["open_time"].n_unique()
 
     gaps = df.filter(pl.col("open_time").diff() > step_ms)
 
     bad_ohlc = df.filter(
-        (pl.col('high')<pl.max_horizontal('open','close')) | (pl.col('low')>pl.min_horizontal('open','close')                                                         )
+        (pl.col("high") < pl.max_horizontal("open", "close"))
+        | (pl.col("low") > pl.min_horizontal("open", "close"))
     )
 
+    zero_volume = df.filter(pl.col("volume") == 0)          # новое
+
     return {
-        "n_rows": df.height,
+        "n_rows": n_rows,
         "n_duplicates": n_duplicates,
         "gaps": gaps.height,
-        "bad_ohlc": bad_ohlc.height
+        "bad_ohlc": bad_ohlc.height,
+        "zero_volume": zero_volume.height,                  # новое
     }
 
 def align_pair(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
@@ -58,3 +62,20 @@ def align_pair(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     a = a.rename({c: f"{c}_a" for c in a.columns if c != "open_time"})
     b = b.rename({c: f"{c}_b" for c in b.columns if c != "open_time"})
     return a.join(b, on="open_time", how="inner").sort("open_time")
+
+def resample(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
+    """Свечи 1m одной монеты -> свечи крупнее (например, 5m = 300_000 мс)."""
+    return (
+        df.with_columns((pl.col("open_time") // step_ms * step_ms).alias("bucket"))
+        .group_by("bucket", maintain_order=True)
+        .agg(
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
+            pl.len().alias("n_bars"),
+        )
+        .rename({"bucket": "open_time"})
+        .sort("open_time")
+    )
