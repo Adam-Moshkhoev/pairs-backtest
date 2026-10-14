@@ -64,17 +64,20 @@ def align_pair(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     return a.join(b, on="open_time", how="inner").sort("open_time")
 
 def resample(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
-    """Свечи 1m одной монеты -> свечи крупнее (например, 5m = 300_000 мс)."""
+    """Свечи 1m -> крупнее. open/high/low только по минутам с торговлей."""
+    traded = pl.col("volume") > 0
+
     return (
         df.with_columns((pl.col("open_time") // step_ms * step_ms).alias("bucket"))
         .group_by("bucket", maintain_order=True)
         .agg(
-            pl.col("open").first(),
-            pl.col("high").max(),
-            pl.col("low").min(),
+            pl.col("open").filter(traded).first().fill_null(pl.col("open").first()),
+            pl.col("high").filter(traded).max().fill_null(pl.col("high").max()),
+            pl.col("low").filter(traded).min().fill_null(pl.col("low").min()),
             pl.col("close").last(),
             pl.col("volume").sum(),
             pl.len().alias("n_bars"),
+            traded.sum().alias("n_traded"),
         )
         .rename({"bucket": "open_time"})
         .sort("open_time")
