@@ -9,5 +9,6 @@ def rolling_zscore(spread:np.ndarray, window:int)->np.ndarray:
     """Z-score спреда по скользящему окну."""
     s = pl.Series(spread)
     mean = s.rolling_mean(window).to_numpy()
+    # mean = s.rolling_mean(window, center=True).to_numpy()  # НЕ ИСПОЛЬЗОВАТЬ: окно по центру смотрит в будущее; только для проверки test_no_lookahead (должен упасть)
     std = s.rolling_std(window).to_numpy()
     return (spread - mean) / std
