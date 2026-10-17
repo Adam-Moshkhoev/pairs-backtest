@@ -25,3 +25,9 @@ FEE_TIER_BPS = {         # комиссии Binance USDⓈ-M по уровням
     "vip7":    {"maker": 0.4, "taker": 2.2},
 }
 SLIPPAGE_BPS = 1.0
+
+# Стратегия
+WINDOW = 288          # окно z-score: 288 свечей × 5 мин = 1 день
+ENTRY_Z = 2.0         # вход, когда |z| > 2
+STOP_Z = 4.0          # стоп, когда |z| > 4
+MAX_HOLD_BARS = 576   # тайм-стоп: 576 свечей = 2 дня
