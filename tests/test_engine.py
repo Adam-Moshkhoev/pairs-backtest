@@ -1,5 +1,6 @@
 import numpy as np
-from src.engine import entry_signal, exit_reason
+import pytest
+from src.engine import entry_signal, exit_reason, leg_quantities
 
 # Вход: z > 2 → -1, z < -2 → +1, иначе 0, NaN → 0
 def test_entry_signal():
@@ -23,3 +24,17 @@ def test_boundaries():
     assert exit_reason(-1, 0.0, 50) == "mean"     # ровно 0 — уже выход
     assert exit_reason(1, -1.0, 575) is None      # 575 — ещё держим
     assert exit_reason(1, -1.0, 576) == "time"    # 576 — тайм-стоп
+
+def test_leg_quantities():
+    qa, qb = leg_quantities(-1, 2500.0, 62500.0)
+    assert qa == pytest.approx(-4)
+    assert qb == pytest.approx(0.16)
+
+    qa, qb = leg_quantities(1, 2500.0, 62500.0)
+    assert qa == pytest.approx(4)
+    assert qb == pytest.approx(-0.16)
+
+
+def test_leg_pnl_sign():
+    qa, qb = leg_quantities(-1, 2500.0, 62500.0)
+    assert qa * (2450.0 - 2500.0) == pytest.approx(200)
