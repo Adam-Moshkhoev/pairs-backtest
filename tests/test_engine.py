@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
-from src.engine import entry_signal, exit_reason, leg_quantities
-
+from src.engine import entry_signal, exit_reason, leg_quantities, run_backtest
 # Вход: z > 2 → -1, z < -2 → +1, иначе 0, NaN → 0
 def test_entry_signal():
     assert entry_signal(2.5) == -1      # ETH дорогой → шорт спреда
@@ -38,3 +37,38 @@ def test_leg_quantities():
 def test_leg_pnl_sign():
     qa, qb = leg_quantities(-1, 2500.0, 62500.0)
     assert qa * (2450.0 - 2500.0) == pytest.approx(200)
+
+def make_case():
+    """6 свечей: одна шорт-сделка, вход на t=2, выход на t=5."""
+    z        = np.array([1.0, 2.5, 1.5, 0.5, -0.1, -0.5])
+    open_a   = np.array([2500, 2500, 2500, 2480, 2460, 2450], dtype=float)
+    close_a  = np.array([2500, 2500, 2490, 2470, 2455, 2450], dtype=float)
+    open_b   = np.full(6, 62500.0)
+    close_b  = np.full(6, 62500.0)
+    tradable = np.full(6, True)
+    return open_a, open_b, close_a, close_b, tradable, z
+
+
+# Одна сделка: каждый доллар посчитан руками
+def test_run_backtest_one_trade():
+    res = run_backtest(*make_case(), "regular")
+    trades = res["trades"]
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["entry_t"] == 2
+    assert t["exit_t"] == 5
+    assert t["direction"] == -1
+    assert t["reason"] == "mean"
+    assert t["pnl"] == pytest.approx(176.12)
+
+    np.testing.assert_allclose(res["equity"], [20000, 20000, 20028, 20108, 20168, 20176.12])
+    np.testing.assert_allclose(res["qty_a"], [0, 0, -4, -4, -4, 0])
+
+
+# Биржа стояла на t=2 → вход переносится на t=3
+def test_run_backtest_halt_delays_entry():
+    open_a, open_b, close_a, close_b, tradable, z = make_case()
+    tradable[2] = False
+    res = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular")
+    assert res["trades"][0]["entry_t"] == 3
