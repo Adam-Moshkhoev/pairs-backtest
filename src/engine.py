@@ -98,4 +98,15 @@ def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
                     if direction != 0:
                         plan = ("enter", direction)               # да → войдём на следующем open
 
+    # ── После цикла: если позиция осталась открытой — закрываем по close последней свечи ──
+    if position != 0:
+        t = n - 1                                                    # последняя свеча
+        cash += qty_a * close_a[t] + qty_b * close_b[t]              # обратная сделка
+        cash -= fill_cost(abs(qty_a) * close_a[t], tier)             # комиссия за ETH
+        cash -= fill_cost(abs(qty_b) * close_b[t], tier)             # комиссия за BTC
+        trades[-1]["exit_t"] = t                                     # когда вышли
+        trades[-1]["reason"] = "end"                                 # данные закончились
+        trades[-1]["pnl"] = cash - trades[-1]["cash_before"]         # прибыль сделки с комиссиями
+        equity[t] = cash                                             # позиции нет → капитал = кошелёк
+
     return {"equity": equity, "trades": trades, "qty_a": hist_qty_a, "qty_b": hist_qty_b}

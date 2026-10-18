@@ -72,3 +72,18 @@ def test_run_backtest_halt_delays_entry():
     tradable[2] = False
     res = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular")
     assert res["trades"][0]["entry_t"] == 3
+
+
+
+# z не вернулся к 0 → сделка закрывается в конце данных с причиной "end"
+def test_run_backtest_closes_at_end():
+    open_a, open_b, close_a, close_b, tradable, _ = make_case()
+    z = np.array([1.0, 2.5, 1.5, 1.2, 1.0, 0.8])     # после входа z не доходит до 0
+    res = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular")
+
+    t = res["trades"][0]
+    assert t["entry_t"] == 2
+    assert t["exit_t"] == 5
+    assert t["reason"] == "end"
+    assert t["pnl"] == pytest.approx(176.12)
+    assert res["equity"][-1] == pytest.approx(20176.12)
