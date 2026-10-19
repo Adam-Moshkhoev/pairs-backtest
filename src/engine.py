@@ -30,9 +30,14 @@ def leg_quantities(direction: int, price_a: float, price_b: float) -> tuple[floa
     return qty_a, qty_b
 
 
-def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
-    """Главный цикл: на каждой свече A) исполнить план, B) капитал, C) новый план."""
+def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier,
+                 funding_a=None, funding_b=None):
+    """Главный цикл: A) фандинг + исполнить план, B) капитал, C) новый план."""
     n = len(z)                              # сколько всего свечей
+    if funding_a is None:                   # ФАНДИНГ: не передали → нули (работает как раньше)
+        funding_a = np.zeros(n)
+    if funding_b is None:
+        funding_b = np.zeros(n)
 
     # Состояние движка (меняется по ходу)
     cash = config.CAPITAL                   # живые доллары, в начале $20 000
@@ -50,6 +55,12 @@ def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
 
     for t in range(n):
 
+        # ── ФАНДИНГ: платит тот, кто держит позицию в момент выплаты (до исполнения плана) ──
+        if position != 0 and (funding_a[t] != 0 or funding_b[t] != 0):
+            pay = qty_a * open_a[t] * funding_a[t] + qty_b * open_b[t] * funding_b[t]   # лонг при ставке > 0 → плюс → платим
+            cash -= pay                                               # заплатили (или получили, если pay < 0)
+            trades[-1]["funding"] -= pay                              # влияние на прибыль: заплатили → минус
+
         # ── Шаг A: на open исполняем план, если он есть и биржа работала ──
         if plan is not None and tradable[t]:
             action, value = plan            # разбираем записку: что делать и с каким значением
@@ -62,7 +73,8 @@ def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
                 cash -= fill_cost(abs(qty_b) * open_b[t], tier)               # комиссия за BTC
                 position = value                                              # запомнили направление позиции
                 bars_held = 0                                                 # отсчёт времени с нуля
-                trades.append({"entry_t": t, "direction": value, "cash_before": cash_before})
+                trades.append({"entry_t": t, "direction": value,
+                               "cash_before": cash_before, "funding": 0.0})   # ФАНДИНГ: счётчик по сделке
 
             else:  # action == "exit"
                 cash += qty_a * open_a[t] + qty_b * open_b[t]                 # закрыли обе ноги: обратная сделка
@@ -70,7 +82,7 @@ def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
                 cash -= fill_cost(abs(qty_b) * open_b[t], tier)               # комиссия за BTC
                 trades[-1]["exit_t"] = t                                      # когда вышли
                 trades[-1]["reason"] = value                                  # почему: mean / stop / time
-                trades[-1]["pnl"] = cash - trades[-1]["cash_before"]          # прибыль сделки с комиссиями
+                trades[-1]["pnl"] = cash - trades[-1]["cash_before"]          # прибыль сделки (с комиссиями и фандингом)
                 if value in ("stop", "time"):
                     paused = True                                             # после аварийного выхода — пауза
                 position = 0                                                  # позиции больше нет
@@ -106,7 +118,7 @@ def run_backtest(open_a, open_b, close_a, close_b, tradable, z, tier):
         cash -= fill_cost(abs(qty_b) * close_b[t], tier)             # комиссия за BTC
         trades[-1]["exit_t"] = t                                     # когда вышли
         trades[-1]["reason"] = "end"                                 # данные закончились
-        trades[-1]["pnl"] = cash - trades[-1]["cash_before"]         # прибыль сделки с комиссиями
+        trades[-1]["pnl"] = cash - trades[-1]["cash_before"]         # прибыль сделки
         equity[t] = cash                                             # позиции нет → капитал = кошелёк
 
     return {"equity": equity, "trades": trades, "qty_a": hist_qty_a, "qty_b": hist_qty_b}

@@ -87,3 +87,24 @@ def test_run_backtest_closes_at_end():
     assert t["reason"] == "end"
     assert t["pnl"] == pytest.approx(176.12)
     assert res["equity"][-1] == pytest.approx(20176.12)
+
+
+# Фандинг: шорт 4 ETH, выплата на t=3 по ставке 1 bp → получаем 4 × 2 480 × 0.0001 = 0.992
+def test_run_backtest_funding():
+    open_a, open_b, close_a, close_b, tradable, z = make_case()
+    fa = np.zeros(6); fa[3] = 0.0001                     # выплата по ETH на свече 3
+    fb = np.zeros(6)                                     # по BTC выплат нет
+    res = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular", fa, fb)
+    t = res["trades"][0]
+    assert t["funding"] == pytest.approx(0.992)          # шорт при ставке > 0 → получаем
+    assert t["pnl"] == pytest.approx(176.12 + 0.992)     # прибыль выросла ровно на фандинг
+
+
+# Фандинг не влияет на решения: входы, выходы и направления те же
+def test_funding_does_not_change_trades():
+    open_a, open_b, close_a, close_b, tradable, z = make_case()
+    fa = np.full(6, 0.0005); fb = np.full(6, -0.0005)    # большой фандинг на каждой свече
+    a = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular")
+    b = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "regular", fa, fb)
+    assert [(t["entry_t"], t["exit_t"], t["direction"]) for t in a["trades"]] == \
+           [(t["entry_t"], t["exit_t"], t["direction"]) for t in b["trades"]]
