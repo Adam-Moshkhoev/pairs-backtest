@@ -32,15 +32,20 @@ def sharpe(daily_ret: np.ndarray) -> float:
 def trade_stats(trades: list[dict]) -> dict:
     """Статистика сделок: число, % прибыльных, средняя, средняя прибыль/убыток, profit factor."""
     pnl = np.array([t["pnl"] for t in trades])          # прибыль каждой сделки
+    if len(pnl) == 0:                                   # сделок нет → считать нечего
+        return {"n_trades": 0, "win_rate": 0.0, "avg_trade": 0.0,
+                "avg_win": 0.0, "avg_loss": 0.0, "profit_factor": float("nan")}
+
     wins = pnl[pnl > 0]                                 # только прибыльные
     losses = pnl[pnl < 0]                               # только убыточные
+    loss_sum = abs(losses.sum())
     return {
-        "n_trades": len(pnl),                           # сколько сделок
-        "win_rate": len(wins) / len(pnl),               # доля прибыльных
-        "avg_trade": pnl.mean(),                        # средняя сделка
-        "avg_win": wins.mean(),                         # средний выигрыш
-        "avg_loss": losses.mean(),                      # средний проигрыш (отрицательный)
-        "profit_factor": wins.sum() / abs(losses.sum()),  # все выигрыши / все проигрыши; > 1 → в плюсе
+        "n_trades": len(pnl),                                       # сколько сделок
+        "win_rate": len(wins) / len(pnl),                           # доля прибыльных
+        "avg_trade": pnl.mean(),                                    # средняя сделка
+        "avg_win": wins.mean() if len(wins) else 0.0,               # средний выигрыш (0, если не было)
+        "avg_loss": losses.mean() if len(losses) else 0.0,          # средний проигрыш (0, если не было)
+        "profit_factor": wins.sum() / loss_sum if loss_sum > 0 else float("inf"),  # нет убытков → inf
     }
 
 

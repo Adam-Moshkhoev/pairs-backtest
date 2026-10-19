@@ -28,3 +28,13 @@ def test_trade_stats():
     assert s["avg_win"] == pytest.approx(15.0)
     assert s["avg_loss"] == pytest.approx(-15.0)
     assert s["profit_factor"] == pytest.approx(2.0)
+
+# Крайние случаи: нет сделок / только выигрыши
+def test_trade_stats_edge_cases():
+    s = trade_stats([])
+    assert s["n_trades"] == 0
+    assert np.isnan(s["profit_factor"])
+
+    s = trade_stats([{"pnl": 10.0}, {"pnl": 5.0}])
+    assert s["avg_loss"] == 0.0
+    assert s["profit_factor"] == float("inf")
