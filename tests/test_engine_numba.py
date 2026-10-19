@@ -1,51 +1,107 @@
 import numpy as np
 import pytest
+
+import config
 from src.engine import run_backtest
 from src.engine_numba import run_backtest_fast
+from src.signals import log_spread, rolling_zscore
 from tests.test_engine import make_case
 
 
 def _same(a, b):
-    """Результаты двух движков совпадают: капитал, позиции, сделки."""
-    np.testing.assert_allclose(a["equity"], b["equity"])          # капитал на каждой свече
-    np.testing.assert_allclose(a["qty_a"], b["qty_a"])            # позиция ETH на каждой свече
-    np.testing.assert_allclose(a["qty_b"], b["qty_b"])            # позиция BTC на каждой свече
-    assert len(a["trades"]) == len(b["trades"])                   # одинаковое число сделок
-    for ta, tb in zip(a["trades"], b["trades"]):                  # каждая сделка по отдельности
-        assert (ta["entry_t"], ta["exit_t"], ta["direction"], ta["reason"]) == \
-               (tb["entry_t"], tb["exit_t"], tb["direction"], tb["reason"])
+    """Два результата бэктеста совпадают: equity, позиции и все сделки."""
+    assert np.allclose(a["equity"], b["equity"])
+    assert np.allclose(a["qty_a"], b["qty_a"])
+    assert np.allclose(a["qty_b"], b["qty_b"])
+    assert len(a["trades"]) == len(b["trades"])
+    for ta, tb in zip(a["trades"], b["trades"]):
+        assert ta["entry_t"] == tb["entry_t"]
+        assert ta["exit_t"] == tb["exit_t"]
+        assert ta["direction"] == tb["direction"]
+        assert ta["reason"] == tb["reason"]
         assert ta["pnl"] == pytest.approx(tb["pnl"])
         assert ta["funding"] == pytest.approx(tb["funding"])
 
 
-# Ручной сценарий из тестов движка: одна шорт-сделка
-def test_fast_equals_python_small():
+# ── Старые тесты: numba = Python ──
+
+# Маленький ручной пример из test_engine
+def test_small_case_same_as_python():
     args = make_case()
     _same(run_backtest(*args, "regular"), run_backtest_fast(*args, "regular"))
 
 
-# Случайные цены: много сделок, стопы, тайм-стопы, остановки биржи, фандинг
-def test_fast_equals_python_random():
-    rng = np.random.default_rng(0)                                # одинаковые данные каждый раз
+# 5000 случайных свечей + фандинг → много сделок всех типов
+def test_random_same_as_python():
+    rng = np.random.default_rng(42)
     n = 5000
-    close_a = 2500 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))   # случайное блуждание цены ETH
-    close_b = 62500 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))  # и BTC
-    open_a, open_b = close_a * 0.999, close_b * 1.001             # open чуть отличается от close
-    tradable = rng.random(n) > 0.01                               # ~1% свечей «биржа стояла»
-    z = rng.normal(0, 1.5, n)                                     # случайный z
-    z[:50] = np.nan                                               # NaN в начале, как в реальности
-    fa = np.where(np.arange(n) % 96 == 0, 0.0001, 0.0)            # выплата раз в 96 свечей (8 ч)
-    fb = np.where(np.arange(n) % 96 == 0, -0.0001, 0.0)
-    args = (open_a, open_b, close_a, close_b, tradable, z)
-    _same(run_backtest(*args, "vip7", fa, fb), run_backtest_fast(*args, "vip7", fa, fb))
+    close_a = 2500 * np.exp(np.cumsum(rng.normal(0, 0.003, n)))
+    close_b = 62500 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))
+    open_a = np.r_[close_a[0], close_a[:-1]]                # open = прошлый close
+    open_b = np.r_[close_b[0], close_b[:-1]]
+    tradable = rng.random(n) > 0.01                         # ~1% свечей без торговли
+    z = rolling_zscore(log_spread(close_a, close_b), 288)
+    fa = np.zeros(n)
+    fb = np.zeros(n)
+    fa[::96] = 0.0001                                       # фандинг каждые 8 ч
+    fb[::96] = -0.00005
+
+    py = run_backtest(open_a, open_b, close_a, close_b, tradable, z, "vip7", fa, fb)
+    nb = run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, "vip7", fa, fb)
+    _same(py, nb)
 
 
-# Сделка открыта в конце данных → причина "end" (проверка кода 4)
-def test_fast_end_of_data():
-    open_a, open_b, close_a, close_b, tradable, _ = make_case()
-    z = np.array([1.0, 2.5, 1.5, 1.2, 1.0, 0.8])                  # z не возвращается к 0
-    args = (open_a, open_b, close_a, close_b, tradable, z)
-    a = run_backtest(*args, "regular")
-    b = run_backtest_fast(*args, "regular")
-    _same(a, b)
-    assert b["trades"][0]["reason"] == "end"
+# Позиция открыта в конце данных → закрываем по последнему close, причина "end"
+def test_end_of_data_same_as_python():
+    n = 20
+    close_a = 2500.0 + np.arange(n)
+    close_b = np.full(n, 62500.0)
+    tradable = np.ones(n, dtype=bool)
+    z = np.full(n, 3.0)                                     # вход и до конца без выхода
+
+    py = run_backtest(close_a, close_b, close_a, close_b, tradable, z, "regular")
+    nb = run_backtest_fast(close_a, close_b, close_a, close_b, tradable, z, "regular")
+    assert nb["trades"][-1]["reason"] == "end"
+    _same(py, nb)
+
+
+# ── Новые тесты: стоп по убытку (4.1) ──
+
+# Стоп по деньгам: шорт, ETH растёт → на t=2 убыток $212 > $150 → выход на open t=3
+def test_loss_stop():
+    z        = np.array([1.0, 2.5, 2.6, 2.7, 2.8, 2.9])     # z не возвращается к 0
+    open_a   = np.array([2500, 2500, 2500, 2560, 2570, 2580], dtype=float)
+    close_a  = np.array([2500, 2500, 2550, 2565, 2575, 2580], dtype=float)
+    open_b   = np.full(6, 62500.0)
+    close_b  = np.full(6, 62500.0)
+    tradable = np.full(6, True)
+    res = run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, "regular",
+                            max_loss=150.0)
+    t = res["trades"][0]
+    assert t["reason"] == "loss"
+    assert t["exit_t"] == 3
+    assert t["pnl"] == pytest.approx(-264.144)              # −240 − 12 − 12.144
+
+
+# max_loss = 0 → правило выключено, результат как у v1
+def test_loss_stop_off_equals_v1():
+    args = make_case()
+    _same(run_backtest(*args, "regular"), run_backtest_fast(*args, "regular", max_loss=0.0))
+
+
+# 1% от капитала $20 000 = $200 → та же сделка, что и max_loss=200
+def test_loss_pct_same_as_dollars():
+    n = 50
+    close_a = 2500.0 + 10.0 * np.arange(n)                  # ETH растёт: 2500, 2510, 2520 …
+    close_b = np.full(n, 62500.0)                           # BTC стоит
+    tradable = np.ones(n, dtype=bool)
+    z = np.full(n, 3.0)                                     # z=3: вход в шорт, mean и stop не сработают
+
+    usd = run_backtest_fast(close_a, close_b, close_a, close_b, tradable, z, "vip7",
+                            max_loss=200.0)
+    pct = run_backtest_fast(close_a, close_b, close_a, close_b, tradable, z, "vip7",
+                            max_loss_pct=200.0 / config.CAPITAL)
+
+    assert len(usd["trades"]) == 1                          # после loss пауза → новых входов нет
+    assert usd["trades"][0]["reason"] == "loss"             # вышли именно по loss
+    assert usd["trades"] == pct["trades"]                   # оба способа дали одинаковую сделку
