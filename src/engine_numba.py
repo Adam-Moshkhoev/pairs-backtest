@@ -124,7 +124,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b,
 def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
                       funding_a=None, funding_b=None,
                       entry_z=config.ENTRY_Z, stop_z=config.STOP_Z, max_hold=config.MAX_HOLD_BARS,
-                      max_loss=0.0, max_loss_pct=0.0):                  # NEW: 0 = выключено
+                      max_loss=0.0, max_loss_pct=0.0):                  # 0 = выключено
     """То же, что run_backtest, но цикл скомпилирован numba. Результат в том же формате.
 
     max_loss     — стоп по убытку в $ (например 200.0)
@@ -140,7 +140,7 @@ def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
     eq, ha, hb, e, x, d, r, p, f = _core(
         open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b,
         fee_frac, config.NOTIONAL, config.CAPITAL, entry_z, stop_z, max_hold,
-        float(max_loss), float(max_loss_pct))                          # NEW: float → одна компиляция
+        float(max_loss), float(max_loss_pct))                          #float → одна компиляция
 
     trades = [
         {"entry_t": int(e[i]), "exit_t": int(x[i]), "direction": int(d[i]),

@@ -189,6 +189,3 @@ tests/                 pytest tests
    - β by regression (then rolling / Kalman)
    - equity-based position sizing
 4. One final out-of-sample check on year 2.
-
-## 11. Use of LLM
-Design choices and debugging were discussed with an LLM; all code was written by me.
