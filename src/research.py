@@ -1,5 +1,5 @@
 import config
-from src.signals import log_spread, rolling_zscore
+from src.signals import log_spread, rolling_zscore, rolling_beta, hedged_spread   # NEW β
 from src.engine_numba import run_backtest_fast
 from src.metrics import summary
 
@@ -9,8 +9,9 @@ def evaluate(df, fa, fb, end,
              entry_z: float = config.ENTRY_Z,
              stop_z: float = config.STOP_Z,
              max_hold: int = config.MAX_HOLD_BARS,
-             max_loss: float = 0.0,                 # NEW: стоп по убытку в $ (0 = выкл)
-             max_loss_pct: float = 0.0,             # NEW: стоп по убытку в % капитала (0 = выкл)
+             max_loss: float = 0.0,                 # стоп по убытку в $ (0 = выкл)
+             max_loss_pct: float = 0.0,             # стоп по убытку в % капитала (0 = выкл)
+             beta_window: int = 0,                  # NEW β: окно скользящего β (0 = β = 1, как v1)
              tier: str = "vip7") -> dict:
     """Один прогон стратегии на свечах [0, end) → словарь метрик + параметры."""
     open_a = df["open_a"].to_numpy()
@@ -19,18 +20,27 @@ def evaluate(df, fa, fb, end,
     close_b = df["close_b"].to_numpy()
     tradable = ((df["n_traded_a"] > 0) & (df["n_traded_b"] > 0)).to_numpy()   # обе монеты торговались
 
-    # z считаем на ВСЕХ данных, потом режем (rolling смотрит только назад → утечки нет)
-    z = rolling_zscore(log_spread(close_a, close_b), window)
+    # NEW β: спред и β на ВСЕХ данных (rolling смотрит только назад → утечки нет)
+    if beta_window > 0:
+        beta = rolling_beta(close_a, close_b, beta_window)    # β на каждой свече
+        spread = hedged_spread(close_a, close_b, beta)        # спред из доходностей
+    else:
+        beta = None                                           # движок возьмёт β = 1
+        spread = log_spread(close_a, close_b)                 # как v1
 
-    cut = slice(0, end)                                   # только год 1
+    z = rolling_zscore(spread, window)
+
+    cut = slice(0, end)                                       # только год 1
     res = run_backtest_fast(
         open_a[cut], open_b[cut], close_a[cut], close_b[cut], tradable[cut], z[cut],
         tier, fa[cut], fb[cut],
         entry_z=entry_z, stop_z=stop_z, max_hold=max_hold,
-        max_loss=max_loss, max_loss_pct=max_loss_pct)     # NEW
+        max_loss=max_loss, max_loss_pct=max_loss_pct,
+        beta=None if beta is None else beta[cut])             # NEW β
 
     out = summary(res)
     out.update({"window": window, "entry_z": entry_z, "stop_z": stop_z,
                 "max_hold": max_hold, "max_loss": max_loss,
-                "max_loss_pct": max_loss_pct, "tier": tier})     # NEW: записываем в журнал
+                "max_loss_pct": max_loss_pct, "beta_window": beta_window,   # NEW β
+                "tier": tier})
     return out
