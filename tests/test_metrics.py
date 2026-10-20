@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from src.metrics import total_return, max_drawdown, sharpe, trade_stats
-
+from src.metrics import (total_return, max_drawdown, daily_returns, sharpe,
+                         trade_stats, exposure, summary, BARS_PER_DAY)
 
 # 20 000 → 22 000 = +10%
 def test_total_return():
@@ -38,3 +38,14 @@ def test_trade_stats_edge_cases():
     s = trade_stats([{"pnl": 10.0}, {"pnl": 5.0}])
     assert s["avg_loss"] == 0.0
     assert s["profit_factor"] == float("inf")
+
+def test_summary_sharpe_nan_if_bankrupt():
+    n = 3 * BARS_PER_DAY                                   # 3 дня свечей
+    equity = np.full(n, 20000.0)
+    equity[BARS_PER_DAY + 10] = -500.0                     # на 2-й день капитал ушёл в минус
+    res = {"equity": equity, "trades": [],
+           "qty_a": np.zeros(n), "qty_b": np.zeros(n)}
+
+    out = summary(res)
+    assert np.isnan(out["sharpe"])                         # Sharpe недействителен
+    assert out["min_equity"] == -500.0                     # минимум виден в таблице

@@ -57,10 +57,12 @@ def exposure(qty_a: np.ndarray) -> float:
 def summary(res: dict) -> dict:
     """Все метрики одним словарём."""
     eq = res["equity"]
+    bankrupt = eq.min() <= 0                            # капитал хоть раз был ≤ 0?
     out = {
         "total_return": total_return(eq),
         "max_drawdown": max_drawdown(eq),
-        "sharpe": sharpe(daily_returns(eq)),
+        "sharpe": float("nan") if bankrupt else sharpe(daily_returns(eq)),   # счёт ≤ 0 → Sharpe бессмыслен
+        "min_equity": float(eq.min()),                  # самый низкий капитал за период
         "exposure": exposure(res["qty_a"]),
     }
     out.update(trade_stats(res["trades"]))              # добавили статистику сделок
