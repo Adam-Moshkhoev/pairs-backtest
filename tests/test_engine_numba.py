@@ -105,3 +105,30 @@ def test_loss_pct_same_as_dollars():
     assert len(usd["trades"]) == 1                          # после loss пауза → новых входов нет
     assert usd["trades"][0]["reason"] == "loss"             # вышли именно по loss
     assert usd["trades"] == pct["trades"]                   # оба способа дали одинаковую сделку
+
+# beta = все 1 → ровно v1
+def test_beta_one_equals_v1():
+    args = make_case()
+    n = len(args[0])
+    _same(run_backtest(*args, "regular"),
+          run_backtest_fast(*args, "regular", beta=np.ones(n)))
+
+
+# β = 1.5 при решении о входе → нога BTC $15 000; β потом меняется, но сделка держит 1.5
+def test_beta_leg_size():
+    z        = np.array([1.0, 2.5, 2.6, -0.1, 0.0])          # вход t=1 → исполнение t=2; z ≤ 0 на t=3 → выход t=4
+    open_a   = np.array([2500, 2500, 2500, 2480, 2450], dtype=float)
+    close_a  = open_a.copy()
+    open_b   = np.array([62500, 62500, 62500, 62300, 62000], dtype=float)
+    close_b  = open_b.copy()
+    tradable = np.full(5, True)
+    beta     = np.array([1.0, 1.5, 2.0, 2.0, 2.0])           # решение на t=1 → β = 1.5
+
+    res = run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, "regular", beta=beta)
+    t = res["trades"][0]
+
+    assert res["qty_a"][2] == pytest.approx(-4.0)            # шорт ETH: 10 000 / 2 500
+    assert res["qty_b"][2] == pytest.approx(0.24)            # лонг BTC: 1.5 × 10 000 / 62 500
+    assert t["reason"] == "mean"
+    assert t["exit_t"] == 4
+    assert t["pnl"] == pytest.approx(50.192)
