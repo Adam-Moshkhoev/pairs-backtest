@@ -132,3 +132,28 @@ def test_beta_leg_size():
     assert t["reason"] == "mean"
     assert t["exit_t"] == 4
     assert t["pnl"] == pytest.approx(50.192)
+
+# exit_z = 0 → ровно v1
+def test_exit_z_zero_equals_v1():
+    args = make_case()
+    _same(run_backtest(*args, "regular"), run_backtest_fast(*args, "regular", exit_z=0.0))
+
+
+# шорт при z=2.5; z опускается только до 0.4 и 0.3 (до 0 не доходит)
+# exit_z = 0.5 → выход по mean на t=4;  exit_z = 0 → сделка висит до конца данных ("end")
+def test_exit_z_early_exit():
+    z        = np.array([1.0, 2.5, 2.6, 0.4, 0.3])
+    open_a   = np.array([2500, 2500, 2500, 2490, 2480], dtype=float)
+    close_a  = open_a.copy()
+    open_b   = np.full(5, 62500.0)
+    close_b  = open_b.copy()
+    tradable = np.full(5, True)
+    args = (open_a, open_b, close_a, close_b, tradable, z)
+
+    early = run_backtest_fast(*args, "regular", exit_z=0.5)["trades"][0]
+    assert early["reason"] == "mean"                       # z = 0.4 ≤ 0.5 на t=3 → выход t=4
+    assert early["exit_t"] == 4
+    assert early["pnl"] == pytest.approx(56.048)           # +80 − 12 − 11.952
+
+    late = run_backtest_fast(*args, "regular", exit_z=0.0)["trades"][0]
+    assert late["reason"] == "end"                         # z до 0 не дошёл → закрыли в конце данных

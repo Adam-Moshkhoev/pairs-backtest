@@ -6,9 +6,9 @@ REASONS = {1: "mean", 2: "stop", 3: "time", 4: "end", 5: "loss"}     # код п
 
 
 @njit
-def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, beta,   #  β: массив β
+def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, beta,
           fee_frac, notional, capital, entry_z, stop_z, max_hold,
-          max_loss, max_loss_pct):
+          max_loss, max_loss_pct, exit_z):
     n = len(z)
 
     # Состояние
@@ -20,7 +20,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
     paused = False
     plan_action = 0          # 0 — нет плана, 1 — вход, 2 — выход
     plan_value = 0           # вход: направление ±1; выход: код причины 1, 2, 3, 5
-    plan_beta = 1.0          #  β: β, зафиксированный в момент решения о входе
+    plan_beta = 1.0          # β, зафиксированный в момент решения о входе
 
     # Результаты по свечам
     equity = np.zeros(n)
@@ -50,7 +50,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
             if plan_action == 1:                             # вход
                 tr_cash_before[k] = cash                     # капитал до входа (позиции нет → cash = equity)
                 qty_a = plan_value * notional / open_a[t]                 # нога ETH: $10 000
-                qty_b = -plan_value * plan_beta * notional / open_b[t]    #  β: нога BTC: β × $10 000
+                qty_b = -plan_value * plan_beta * notional / open_b[t]    # нога BTC: β × $10 000
                 cash -= qty_a * open_a[t] + qty_b * open_b[t]
                 cash -= abs(qty_a) * open_a[t] * fee_frac    # как fill_cost
                 cash -= abs(qty_b) * open_b[t] * fee_frac    # как fill_cost
@@ -89,7 +89,8 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
                     limit = max_loss_pct * tr_cash_before[k - 1]     # вариант 2: % от капитала при входе
 
                 # порядок выхода: mean → stop → loss → time
-                if (position == -1 and z[t] <= 0) or (position == 1 and z[t] >= 0):
+                # mean: шорт спреда выходит при z ≤ exit_z, лонг — при z ≥ −exit_z
+                if (position == -1 and z[t] <= exit_z) or (position == 1 and z[t] >= -exit_z):
                     plan_action, plan_value = 2, 1                   # mean
                 elif abs(z[t]) > stop_z:
                     plan_action, plan_value = 2, 2                   # stop
@@ -100,14 +101,14 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
             else:
                 if paused and abs(z[t]) < entry_z:
                     paused = False
-                if not paused and not np.isnan(beta[t]):             #  β: без β не входим
+                if not paused and not np.isnan(beta[t]):             # без β не входим
                     # как entry_signal
                     if z[t] > entry_z:
                         plan_action, plan_value = 1, -1
-                        plan_beta = beta[t]                          #  β: фиксируем β на всю сделку
+                        plan_beta = beta[t]                          # β фиксируется на всю сделку
                     elif z[t] < -entry_z:
                         plan_action, plan_value = 1, 1
-                        plan_beta = beta[t]                          #  β
+                        plan_beta = beta[t]
 
     # ── Закрыть открытую позицию в конце данных ──
     if position != 0:
@@ -127,12 +128,16 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
 def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
                       funding_a=None, funding_b=None,
                       entry_z=config.ENTRY_Z, stop_z=config.STOP_Z, max_hold=config.MAX_HOLD_BARS,
-                      max_loss=0.0, max_loss_pct=0.0, beta=None):        #  β: None = β = 1 (как v1)
+                      max_loss=0.0, max_loss_pct=0.0, beta=None, exit_z=0.0):
     """То же, что run_backtest, но цикл скомпилирован numba. Результат в том же формате.
 
-    max_loss     — стоп по убытку в $ (например 200.0)
-    max_loss_pct — стоп по убытку в % от капитала при входе (например 0.01 = 1%)
-    beta         — массив β на каждой свече; нога BTC = β × NOTIONAL. None → все 1.
+    По умолчанию все дополнительные правила выключены → результат как у v1.
+
+    max_loss     — стоп по убытку в $ (например 200.0); 0 = выключен
+    max_loss_pct — стоп по убытку в % от капитала при входе (0.01 = 1%); 0 = выключен
+    beta         — массив β на каждой свече, нога BTC = β × NOTIONAL; None = β = 1
+    exit_z       — выход по mean, когда z вернулся до exit_z (шорт: z ≤ exit_z, лонг: z ≥ −exit_z);
+                   0 = выход при z = 0
     """
     n = len(z)
     if funding_a is None:
@@ -140,14 +145,14 @@ def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
     if funding_b is None:
         funding_b = np.zeros(n)
     if beta is None:
-        beta = np.ones(n)                                              #  β
+        beta = np.ones(n)                                    # β = 1 на всех свечах
     fee_frac = (config.FEE_TIER_BPS[tier]["taker"] + config.SLIPPAGE_BPS) / 10000   # bp → доля
 
     eq, ha, hb, e, x, d, r, p, f = _core(
         open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b,
-        np.asarray(beta, dtype=np.float64),                            #  β: всегда float-массив
+        np.asarray(beta, dtype=np.float64),                  # numba нужен float-массив
         fee_frac, config.NOTIONAL, config.CAPITAL, entry_z, stop_z, max_hold,
-        float(max_loss), float(max_loss_pct))
+        float(max_loss), float(max_loss_pct), float(exit_z))     # float → одна компиляция numba
 
     trades = [
         {"entry_t": int(e[i]), "exit_t": int(x[i]), "direction": int(d[i]),
