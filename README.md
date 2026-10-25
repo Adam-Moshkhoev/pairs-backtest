@@ -1,13 +1,13 @@
 # ETH/BTC Pairs Trading — Backtest (Binance USDⓈ-M perpetuals)
 
-A mean-reversion pairs strategy on the ETH/BTC spread, built and backtested from scratch on 5-minute bars (October 2024 – September 2026) with realistic costs: taker fees, slippage and funding.
+Statistical-arbitrage strategies on the ETH/BTC spread, built and backtested from scratch on 5-minute bars (October 2024 – September 2026) with realistic costs: taker fees, slippage and funding. Two opposite ideas were tested on the same spread: **mean reversion** (v1, v2) and **trend-following** (v3).
 
 **How the data was used**
 
 | Period | Dates | Used for |
 |--------|-------|----------|
 | **Year 1** | Oct 2024 – Sep 2025 (105,120 bars) | all research and every parameter choice |
-| **Year 2** | Oct 2025 – Sep 2026 (105,120 bars) | held out, used **once** for the final test |
+| **Year 2** | Oct 2025 – Sep 2026 (105,120 bars) | held out, used **once** per strategy for the final test |
 
 ---
 
@@ -15,17 +15,18 @@ A mean-reversion pairs strategy on the ETH/BTC spread, built and backtested from
 
 | Version | What it is | Year 1 (research), VIP-7 | **Year 2 (test), VIP-7** | **Year 2 (test), Regular** |
 |---------|------------|--------------------------|--------------------------|----------------------------|
-| **v1** | baseline: 1-day z-score window, entry at \|z\| > 2 | −34.7%, Sharpe −1.76 | −3.2%, Sharpe −0.28 | −31.4%, Sharpe −3.30 |
-| **v2** | 7-day z-score window, entry at \|z\| > 2.5 | −8.1%, Sharpe −0.59 | **+8.9%, Sharpe +1.08** | **+4.9%, Sharpe +0.61** |
+| **v1** | mean reversion, 1-day z-window, entry \|z\| > 2 | −34.7%, Sharpe −1.76 | −3.2%, Sharpe −0.28 | −31.4%, Sharpe −3.30 |
+| **v2** | mean reversion, 7-day z-window, entry \|z\| > 2.5 | −8.1%, Sharpe −0.59 | **+8.9%, Sharpe +1.08** | **+4.9%, Sharpe +0.61** |
+| **v3** | trend-following, 7-day z-window, entry \|z\| > 2, exit at \|z\| = 1 | **+24.3%, Sharpe +1.50** | −21.5%, Sharpe −1.97 | −27.4%, Sharpe −2.48 |
 
 - **v1 loses money** at every fee tier, in both years.
-- **v2 was chosen on year 1 only** (out of ~150 tested variants) and fixed by a git commit before year 2 was opened.
-- **v2 beats v1 in both years and at every fee tier**, and is **profitable on the held-out year 2** with a max drawdown of about −7%.
-- **But:** v2 trades only ~72 times a year, was still negative on year 1, and is roughly flat over the two years combined. The improvement over v1 is real; a statistically proven edge is not.
-- **Main reason:** the ETH/BTC spread mean-reverts only weakly (half-life of 1–6 weeks), so the edge is small.
+- **v2** (chosen on year 1 only, fixed by commit before the test) is **profitable on year 2** at every tier with a max drawdown of about −7%, but it lost money on year 1 and is roughly flat over the two years.
+- **v3** (chosen on year 1 only, fixed by commit before the test) looked strong on year 1 — all 12 grid cells positive — but **failed on year 2** (−21.5% … −27.4%, negative in all four quarters).
+- **Main finding:** the ETH/BTC spread has **no stable regime**. Year 1 was trending (v3 won, v2 lost), year 2 was mean-reverting (v2 won, v3 lost). Each strategy works only in "its" year, and a z-score alone cannot tell which regime the market is in. Neither version has a proven edge over both years.
+- **The process worked:** v3's year-1 result rested on two trades (93% of its profit); this was recorded before the test, and the one-time test exposed it.
 
-![Equity v1 and v2](reports/figures/06_equity_v1_v2.png)
-![Drawdown v1 and v2](reports/figures/06_drawdown_v1_v2.png)
+![Equity v1, v2, v3 on year 2](reports/figures/09_equity_v1_v2_v3.png)
+![Drawdown v1, v2, v3 on year 2](reports/figures/09_drawdown_v1_v2_v3.png)
 
 ---
 
@@ -33,25 +34,44 @@ A mean-reversion pairs strategy on the ETH/BTC spread, built and backtested from
 
 Legs: **A = ETHUSDT**, **B = BTCUSDT** (Binance USDⓈ-M perpetual futures).
 
+### 2.1 Common parts (all versions)
+
 1. **Spread:** `s = ln(ETH) − β · ln(BTC)`, β = 1. The spread rises when ETH outperforms BTC.
 2. **Z-score:** `z = (s − rolling mean) / rolling std` over the last `window` bars. The window includes the current bar and only looks backwards.
-3. **Entry:** `z > entry_z` → **short the spread** (short ETH, long BTC); `z < −entry_z` → **long the spread** (long ETH, short BTC).
-4. **Size:** $10,000 notional per leg, fixed. Starting capital $20,000.
-5. **Exit (mean):** close when z crosses back to 0.
-6. **Stop:** close when |z| > 4.
-7. **Time stop:** close after 576 bars (2 days).
-8. **Pause:** after a stop or time-stop exit, no new entry until |z| < entry_z.
-9. **Execution:** one position at a time; decisions on the bar close, execution at the **next bar's open**; no trade on bars where either leg had no trades; a position still open at the end of the data is closed at the last close (reason `end`).
+3. **Size:** $10,000 notional per leg, fixed. Starting capital $20,000. Dollar-neutral (not β-neutral).
+4. **Execution:** one position at a time; decisions on the bar close, execution at the **next bar's open**; no trade on bars where either leg had no trades; a position still open at the end of the data is closed at the last close (reason `end`).
+5. **Pause:** after a stop or time-stop exit, no new entry until |z| < entry_z.
 
-| Parameter | v1 | v2 |
-|-----------|----|----|
-| `window` | 288 bars (1 day) | 2016 bars (7 days) |
-| `entry_z` | 2.0 | 2.5 |
-| exit, stop, time stop, β, size | same | same |
+### 2.2 Mean reversion (v1, v2)
+
+- **Entry:** `z > entry_z` → **short the spread** (short ETH, long BTC); `z < −entry_z` → **long the spread** (long ETH, short BTC).
+- **Exit (mean):** close when z crosses back to 0.
+- **Stop:** close when |z| > 4.
+- **Time stop:** close after 576 bars (2 days).
 
 **Example trade.** z = 2.4 with ETH = 2,500 and BTC = 62,500 → short 4 ETH, long 0.16 BTC. Five hours later ETH = 2,475, BTC unchanged, z back to 0 → exit. ETH leg +$100, BTC leg $0, fees (VIP-7) −$12.80 → **+$87.20**.
 
-**v1 has no regime filter.** It enters on |z| > 2 even while the spread is trending. In a steady trend the rolling mean and std follow the spread, so z stays around 2 (for a perfectly linear trend z ≈ √3 ≈ 1.7 regardless of its speed) and the z-stop (|z| > 4) never fires; the trade is closed only by the 2-day time stop. This produced v1's largest losses and is why a regime filter was planned. The filter was tested (4.4) and rejected; the longer z-window of v2 addressed the problem better.
+### 2.3 Trend-following (v3)
+
+Same spread and z-score, **opposite bet**: a large |z| is treated as the start of a trend, not as a dislocation.
+
+- **Entry:** `z > entry_z` → **long the spread** (long ETH, short BTC); `z < −entry_z` → **short the spread**.
+- **Exit (fade):** close when the move has faded: long → `z ≤ exit_z`; short → `z ≥ −exit_z` (reason `fade`).
+- **No z-stop:** in a trend a growing |z| is the goal.
+- **Time stop:** 4032 bars (14 days).
+
+**Example trade (unit test, Regular fees).** z rises to 2.5 with ETH = 2,500, BTC = 62,500 → long 4 ETH, short 0.16 BTC. ETH rises to 2,600, z falls to 0.4 (below exit 0.5) → exit at 2,600. ETH leg +$400, BTC leg $0, fees −$24.24 → **+$375.76**.
+
+| Parameter | v1 | v2 | v3 |
+|-----------|----|----|----|
+| direction | against the move | against the move | with the move |
+| `window` | 288 bars (1 day) | 2016 bars (7 days) | 2016 bars (7 days) |
+| `entry_z` | 2.0 | 2.5 | 2.0 |
+| exit | z crosses 0 | z crosses 0 | \|z\| back to 1.0 |
+| z-stop | \|z\| > 4 | \|z\| > 4 | none |
+| time stop | 2 days | 2 days | 14 days |
+
+**v1 has no regime filter.** It enters on |z| > 2 even while the spread is trending. In a steady trend the rolling mean and std follow the spread, so z stays around 2 (for a perfectly linear trend z ≈ √3 ≈ 1.7 regardless of its speed) and the z-stop (|z| > 4) never fires; the trade is closed only by the 2-day time stop. This produced v1's largest losses and is why a regime filter was planned. An entry filter was tested (4.4) and rejected; the longer z-window of v2 addressed the problem better, and v3 tried to trade the trends directly.
 
 ---
 
@@ -84,20 +104,22 @@ Legs: **A = ETHUSDT**, **B = BTCUSDT** (Binance USDⓈ-M perpetual futures).
 |-------|-----|--------|
 | Money is counted correctly | 6-bar example with every dollar calculated by hand (equity on each bar, fees, PnL 176.12) | exact match |
 | Stops and new rules | hand-calculated cases: loss stop (PnL −264.144), β-sized BTC leg (0.24 BTC, PnL 50.192), early exit (PnL 56.048) | exact match |
+| Trend mode (v3) | hand case: long 4 ETH / short 0.16 BTC, `fade` exit, PnL 375.76; a case where mean reversion hits the z-stop but trend mode does not | exact match |
+| New options do not change old results | every new option switched off (`trend=False`, `exit_z=0`, β = 1, no loss stop) gives exactly v1 | identical |
 | Fast engine = reference engine | numba engine vs Python engine on hand cases and 5,000 random bars with funding | identical trades, equity and positions; numba 46× faster |
 | No look-ahead | z-score test: a centred window (which looks into the future) must fail the test | passes only with the backward window |
 | Funding does not change decisions | same trades with and without funding | identical |
-| New code does not change old results | after every change the year-1 baseline was re-run | always −34.7%, Sharpe −1.76 |
+| Year-1 baseline after every change | v1 re-run on year 1 after each code change | always −34.7%, Sharpe −1.76 |
 | Bankrupt runs | a test where equity dips below zero between daily samples | Sharpe = NaN, `min_equity` shows it |
-| Notebooks agree | year 1 in the final notebook (06) vs research notebook (05); quarterly sums vs yearly totals | identical |
+| Notebooks agree | final-test notebooks (06, 09) re-run year 1 and match the research notebooks (05, 08); v1/v2 year-2 results in 09 match 06; quarterly sums match yearly totals | identical |
 
-**42 tests** in `tests/` (`pytest -v`).
+**45 tests** in `tests/` (`pytest -v`).
 
 **A bug found and fixed during research:** one grid cell (12-hour window, entry 1.5) showed Sharpe **+0.99** while its return was **−107%** — equity had gone below zero, and daily returns (change ÷ yesterday's equity) became meaningless. Since then Sharpe is NaN for any run whose equity touches zero, and every table shows `min_equity`.
 
 ---
 
-## 5. Research on year 1 — step by step
+## 5. Research on year 1 — mean reversion (v1 → v2)
 
 Rules used throughout:
 - **one change at a time**, compared with the year-1 baseline;
@@ -385,9 +407,115 @@ The spread is close to a random walk and its speed of reversion changes a lot. T
 
 ---
 
-## 6. Final test on year 2 (run once)
+## 6. Research on year 1 — trend-following (v3)
 
-Notebook `06_final_test.ipynb`. Each year is a separate run starting from $20,000.
+Notebook `08_v3_trend_year1.ipynb`. Same rules as in section 5: year 1 only, plateau not peak, both fee tiers.
+
+**Why try it.** v1's largest losses came from trends (z stalls near 2 and the z-stop never fires), the spread's half-life is weeks to months, and v2 lost most of its money in the trending 2025-Q3. If large deviations often keep going, the opposite bet could earn on exactly the moves that hurt mean reversion.
+
+**Honest note:** v3 was designed **after** year 2 had been opened for v2 (section 7). Its parameters were chosen on year 1 only, but the decision to try a trend strategy was made knowing that year 2 existed.
+
+### 6.1 Diagnostics: does the spread keep moving after a breakout?
+
+Event study on year 1: every time |z| crossed 2 (re-armed after |z| < 1), measure the spread's move in the breakout direction 6 h, 1 d, 2 d and 4 d later, for z-windows of 1, 2, 4 and 7 days.
+
+- **1–2 day windows:** the spread mostly **reverted** (negative median).
+- **4–7 day windows:** on average it **continued** (+21 … +50 bp).
+- The signal is weak: t-statistics were mostly below 2 (one cell, 7-day window / 6 h, had t = 2.45), and 16 cells were tested.
+
+### 6.2 Rules written before the grid
+
+- Windows 4 / 7 / 10 days × entry 2.0 / 2.5 × exit 0.5 / 1.0 = **12 variants**, max hold 14 days.
+- Accept v3 only if there is a **plateau** AND Sharpe beats v2 on year 1 at **both** tiers (VIP-7 > −0.59, Regular > −0.91).
+
+### 6.3 Grid (year 1)
+
+Sharpe, VIP-7:
+
+| window | e2.0 / x0.5 | e2.0 / x1.0 | e2.5 / x0.5 | e2.5 / x1.0 |
+|--------|-------------|-------------|-------------|-------------|
+| 1152 (4 d) | 1.10 | 1.31 | 0.85 | 1.33 |
+| 2016 (7 d) | 1.01 | **1.50** | 0.79 | 1.57 |
+| 2880 (10 d) | 0.97 | 1.17 | 1.21 | 1.02 |
+
+Sharpe, Regular:
+
+| window | e2.0 / x0.5 | e2.0 / x1.0 | e2.5 / x0.5 | e2.5 / x1.0 |
+|--------|-------------|-------------|-------------|-------------|
+| 1152 | 0.77 | 0.81 | 0.59 | 1.00 |
+| 2016 | 0.81 | **1.22** | 0.63 | 1.36 |
+| 2880 | 0.83 | 0.98 | 1.10 | 0.87 |
+
+Return, VIP-7:
+
+| window | e2.0 / x0.5 | e2.0 / x1.0 | e2.5 / x0.5 | e2.5 / x1.0 |
+|--------|-------------|-------------|-------------|-------------|
+| 1152 | +19.8% | +21.0% | +14.6% | +21.0% |
+| 2016 | +18.4% | **+24.3%** | +13.3% | +23.6% |
+| 2880 | +19.1% | +20.8% | +21.4% | +15.6% |
+
+Trades per year:
+
+| window | e2.0 / x0.5 | e2.0 / x1.0 | e2.5 / x0.5 | e2.5 / x1.0 |
+|--------|-------------|-------------|-------------|-------------|
+| 1152 | 115 | 147 | 88 | 95 |
+| 2016 | 68 | **79** | 54 | 55 |
+| 2880 | 52 | 61 | 37 | 41 |
+
+- **All 12 cells positive at both tiers** → both pre-registered rules passed.
+- Win rate 27–37%, profit factor 1.3–1.9: lose often and small, win rarely and big.
+- Exit 1.0 beats 0.5 in 5 of 6 rows. The best exit is at the edge of the grid (1.5 was not tried, on purpose).
+- **Choice: window 2016, entry 2.0, exit 1.0** — not the peak (e2.5 / x1.0, Sharpe 1.57) but the cell with the strongest neighbours (average neighbour Sharpe 1.27 vs 1.16) and more trades (79 vs 55).
+
+### 6.4 Checking the chosen cell's trades (year 1, VIP-7)
+
+- 79 trades, all closed by `fade`; the 14-day time stop never fired (longest trade 158 h).
+- Best trades last 2–7 days and fall on real ETH-over-BTC rallies (around 8 May and 15 July 2025). Worst trades are short false breakouts (1–36 h, worst −$304).
+
+**Profit is concentrated:**
+
+| | PnL |
+|-|-----|
+| 2 best trades | +$4,528 (93% of the total) |
+| 10 best trades | +$9,058 |
+| other 69 trades | −$4,199 |
+| total without the 2 best | ≈ +$331 |
+
+This is the mirror image of v1, where 10 trades caused the whole loss.
+
+**Is it the window?** Same entry/exit, three windows:
+
+| Window | Trades | Total | 2 best trades | Share | Without them | Positive quarters |
+|--------|--------|-------|---------------|-------|--------------|-------------------|
+| 1152 | 147 | +$4,195 | +$4,144 | 99% | +$51 | 3 of 4 |
+| **2016** | **79** | **+$4,859** | +$4,528 | 93% | **+$331** | 2 of 4 |
+| 2880 | 61 | +$4,162 | +$4,549 | 109% | −$386 | 2 of 4 |
+
+The concentration does not depend on the window: every version catches the same two trends. A rule written before this check ("switch to 1152 only if its 2-best share is < 50%") was not met, so 2016 was kept.
+
+**Quarters, year 1 (VIP-7):**
+
+| Quarter | v2 | v3 |
+|---------|----|----|
+| 2024-Q4 | +476 | −417 |
+| 2025-Q1 | −160 | −356 |
+| 2025-Q2 | +159 | +2,016 |
+| 2025-Q3 | −2,102 | **+3,616** |
+| **Year** | **−1,627** | **+4,859** |
+
+In the trending 2025-Q3, v2 lost and v3 earned: the two strategies complement each other.
+
+### Decision
+
+**v3 = window 2016 (7 days), entry 2.0, exit 1.0, max hold 4032 bars (14 days), trend mode.** Written to `config.py` (`V3_WINDOW`, `V3_ENTRY_Z`, `V3_EXIT_Z`, `V3_MAX_HOLD`) and committed **before** the year-2 test.
+
+**Expectation recorded before the test:** v3 will make money on year 2 only if there are one or two large ETH/BTC trends; since v2 had already done well on year 2 (a mean-reverting year), the realistic expectation is around zero or a small loss.
+
+---
+
+## 7. Final test on year 2 (run once per strategy)
+
+Notebooks `06_final_test.ipynb` (v1, v2) and `09_v3_final_test.ipynb` (v3; it also re-runs v1 and v2 and matches notebook 06 exactly). Each year is a separate run starting from $20,000.
 
 | Version | Tier | Trades | Win rate | Return | Max DD | Sharpe | Min equity |
 |---------|------|--------|----------|--------|--------|--------|------------|
@@ -397,6 +525,9 @@ Notebook `06_final_test.ipynb`. Each year is a separate run starting from $20,00
 | **v2** | Regular | 72 | 56.9% | **+4.9%** | −7.6% | **+0.61** | $19,766 |
 | **v2** | VIP-4 | 72 | 59.7% | **+7.7%** | −7.0% | **+0.95** | $19,794 |
 | **v2** | VIP-7 | 72 | 59.7% | **+8.9%** | −6.7% | **+1.08** | $19,805 |
+| v3 | Regular | 106 | — | −27.4% | −29.4% | −2.48 | — |
+| v3 | VIP-4 | 106 | — | −23.2% | −25.4% | −2.11 | — |
+| v3 | VIP-7 | 106 | 18.9% | −21.5% | −23.8% | −1.97 | $15,704 |
 
 Year 1 vs year 2:
 
@@ -408,61 +539,100 @@ Year 1 vs year 2:
 | v2 | Regular | −12.3% / −0.91 | +4.9% / +0.61 |
 | v2 | VIP-4 | −9.3% / −0.68 | +7.7% / +0.95 |
 | v2 | VIP-7 | −8.1% / −0.59 | +8.9% / +1.08 |
+| v3 | Regular | Sharpe +1.22 | −27.4% / −2.48 |
+| v3 | VIP-7 | +24.3% / +1.50 | −21.5% / −1.97 |
 
-In dollars (start $20,000):
+In dollars (start $20,000, VIP-7):
 
-| v2 | Year 1 | Year 2 | Both years (sum) |
-|----|--------|--------|------------------|
-| Regular | −$2,459 | +$970 | −$1,489 |
-| VIP-4 | −$1,865 | +$1,546 | −$319 |
-| VIP-7 | −$1,627 | +$1,776 | +$149 |
+| | Year 1 | Year 2 | Both years (sum) |
+|-|--------|--------|------------------|
+| v2 | −$1,627 | +$1,776 | +$149 |
+| v3 | +$4,859 | −$4,296 | +$563 |
 
-**Conclusions**
-1. v2 beats v1 in both years and at every fee tier → the long window is a real improvement, not a fit to year 1.
-2. On year 2 v2 is profitable even on Regular fees: with only 72 trades, costs barely matter.
-3. Risk is low: max drawdown ≈ −7%, equity never below ≈ $19,770.
-4. Year 2 was easier for both versions (v1 also improved), so part of the profit is the market regime. The gap between v1 and v2 held.
+### Why v2 held and v3 failed
+
+**v2.** Beats v1 in both years and at every tier; profitable on year 2 even on Regular fees (only 72 trades); max drawdown ≈ −7%. Year 2 was easier for both mean-reversion versions (v1 also improved), so part of the profit is the market regime; the gap between v1 and v2 held.
+
+**v3 on year 2 (VIP-7):**
+- 106 trades, all closed by `fade`, average 24 h (37 h on year 1).
+- **No large trend:** the best trade made +$622 (year 1: +$2,360); the two best together +$1,077; without them −$5,373.
+- **Almost every breakout was false:** win rate 19%. With an average win of $181 and an average loss of $92, break-even needs ≈ 92 / (181 + 92) ≈ 34%.
+- **Negative in all four quarters**, a steady decline from November 2025.
+
+Quarters, year 2 (VIP-7):
+
+| Quarter | v1 | v2 | v3 |
+|---------|----|----|----|
+| 2025-Q4 | +1,288 | **+1,950** | **−1,950** |
+| 2026-Q1 | −689 | −91 | −900 |
+| 2026-Q2 | −651 | +305 | −1,162 |
+| 2026-Q3 | −589 | −388 | −284 |
+
+In 2025-Q4 v2 made +$1,950 and v3 lost exactly −$1,950: opposite bets on the same moves. The expectation recorded before the test (around zero or a small loss unless large trends appear) was right in direction; the loss was larger than expected.
 
 ---
 
-## 7. Costs and edge per turnover
+## 8. Two strategies, two regimes
 
-Turnover = 4 fills × $10,000 per round trip. Gross edge = PnL before fees ÷ turnover (approximate, from the results above).
+| | Year 1 (VIP-7) | Year 2 (VIP-7) |
+|-|----------------|----------------|
+| v2 (mean reversion) | −8.1% | **+8.9%** |
+| v3 (trend) | **+24.3%** | −21.5% |
+
+Each strategy wins only in "its" year. **The ETH/BTC spread switches between trending and mean-reverting regimes, and a z-score alone cannot tell which one is active.**
+
+**What if both ran at once?** (Arithmetic after the test, not a strategy.) Two $20k accounts, VIP-7: year 1 −$1,627 + $4,859 = **+8.1%** of $40k; year 2 +$1,776 − $4,296 = **−6.3%**; ≈ **+1.8% over two years**. Combining two strategies with no edge gives no edge; they also partly cancel (when |z| > 2.5 both can be open in opposite directions) while fees are paid twice.
+
+**What if we knew the regime?** v3 in year 1 and v2 in year 2 would give +24.3% and +8.9% — but that needs the answer in advance. A real filter would use past data only, would react late, and regimes also change within a year (year 1: v2 better in 2024-Q4, v3 in 2025-Q2/Q3).
+
+**Why this was not built here:** both years are now used. Any switching rule designed today would be fitted to year 2, whose answer is already known. This is the natural next step and needs data the strategy has not seen (section 11).
+
+---
+
+## 9. Costs and edge per turnover
+
+Turnover = 4 fills × $10,000 per round trip. Gross edge = PnL before fees ÷ turnover (approximate, VIP-7 results).
 
 | Version | Period | Trades | Turnover | Gross edge | Covers costs? |
 |---------|--------|--------|----------|------------|---------------|
 | v1 | 2 years | 987 | $39.5M | ≈ +1.2 bp | no (costs 3.2–6 bp) |
 | v2 | 2 years | 146 | $5.8M | ≈ +3.5 bp | ≈ break-even at VIP-7 (3.2 bp) |
 | v2 | year 2 | 72 | $2.9M | ≈ +9.4 bp | yes, all tiers |
+| v3 | year 1 | 79 | $3.2M | ≈ +18.6 bp | yes, all tiers |
+| v3 | year 2 | 106 | $4.2M | ≈ −6.9 bp | no — negative before costs |
+| v3 | 2 years | 185 | $7.4M | ≈ +4.0 bp | ≈ break-even at VIP-4/VIP-7 |
 
-v1 needs > 6 bp per fill to break even on Regular and makes 1.2 bp. v2 earns more per dollar traded because it trades rarely and only on large deviations.
+v3's problem on year 2 is not costs: it lost money before fees.
 
 ---
 
-## 8. Limitations
+## 10. Limitations
 
-- **Small sample:** ~72 trades a year for v2. A Sharpe of ~1 over one year is not statistically significant; a handful of trades can flip a year.
-- **Year 2 was favourable** for both versions; over two years combined v2 is roughly flat. On year 1, v2 lost money even with tuned parameters.
+- **Small samples:** ~72 trades a year for v2, 79–106 for v3. A Sharpe of ~1–1.5 over one year is not statistically significant; a handful of trades can flip a year (v3's year-1 profit came from 2 trades).
+- **Regime dependence:** v2 and v3 each worked in one year and failed in the other.
 - **One pair**, and it mean-reverts weakly (half-life 1–6 weeks, unstable).
-- **v1's year-2 result had been seen before** the final test (on 18.10); for v2 the final test was the first look at year 2.
-- **Fixed $10k legs:** leverage grows as equity falls (v1 reached ~16× at its worst). v2's equity stayed above ≈ $18,000 across both years.
-- **β = 1**; a rolling hedge ratio was tested and did not help.
+- **Order of the tests:** v1's year-2 result had been seen before the final test (on 18.10); v2's final test was the first look at year 2; v3 was designed after year 2 had been opened for v2 (parameters from year 1 only, fixed by commit).
+- **Multiple testing:** ~150 variants for v2, 12 for v3 (plus 16 diagnostic cells).
+- **Fixed $10k legs:** leverage grows as equity falls (v1 reached ~16× at its worst).
+- **β = 1**, dollar-neutral but not β-neutral; a rolling hedge ratio was tested and did not help.
 - Taker fills with flat 1 bp slippage; no market-impact model; no maker orders.
-- One position at a time; no regime filter (tested, rejected).
+- One position at a time; no working regime filter.
 
-## 9. Next steps
+## 11. Next steps
 
-1. **Walk-forward:** re-select the window every quarter on the previous 12 months and trade the next quarter — the market changes (β 1.0 → 1.5, half-life 6–42 days), so parameters need regular re-tuning.
-2. **Other pairs** with stronger mean reversion (cointegration test, half-life in days).
-3. **Trend-following on the same spread:** v1's biggest losses came from trends; build on year 1 only, test once on year 2.
+1. **Regime filter tested on unseen data.** Use ETH/BTC (both years) only to design a filter that switches between v2 and v3 — for example the efficiency ratio of the spread over 7 days (`|s_t − s_(t−n)| / Σ|Δs|`: near 1 = trend → v3, near 0 = back-and-forth → v2). Fix it by commit, then test once on:
+   - **other pairs**, chosen by a rule written before looking at their prices (e.g. SOL/ETH, SOL/BTC, BNB/BTC, BNB/ETH), reporting all of them; and/or
+   - **new ETH/BTC data** from October 2026 onwards.
+2. **Walk-forward:** re-select parameters every quarter on the previous 12 months and trade the next quarter.
+3. **Other pairs** with stronger mean reversion (cointegration test, half-life in days).
 4. **Equity-based position sizing** instead of fixed $10k legs.
 5. **Maker / limit execution** to cut costs.
 
 ---
 
-## 10. Output for the team
+## 12. Output for the team
 
-`reports/positions_v1.parquet` and `reports/positions_v2.parquet` — one row per symbol per 5-minute bar, both years (positions do not depend on the fee tier):
+`reports/positions_v1.parquet`, `reports/positions_v2.parquet`, `reports/positions_v3.parquet` — one row per symbol per 5-minute bar, both years, one continuous run (positions do not depend on the fee tier):
 
 | column | type | meaning |
 |--------|------|---------|
@@ -473,7 +643,15 @@ v1 needs > 6 bp per fill to break even on Regular and makes 1.2 bp. v2 earns mor
 
 Example (v2): `ETHUSDT −4.07` and `BTCUSDT +0.161` on 2024-10-09 15:20 = short ETH $10k, long BTC $10k. v2 is in a position 26% of the time (v1: 54%).
 
-## 11. How to run
+Final-test results (notebook 09), also as parquet:
+
+| file | contents |
+|------|----------|
+| `reports/final_test_v1_v2_v3.parquet` | all metrics: 3 versions × 3 fee tiers × 2 years |
+| `reports/trades_v3_year2.parquet` | every v3 trade on year 2 |
+| `reports/quarters_year2.parquet` | quarterly PnL of v1, v2, v3 on year 2 |
+
+## 13. How to run
 
 ```bash
 # 1. install dependencies (Python 3.13)
@@ -483,18 +661,19 @@ pip install -r requirements.txt
 python -m src.download
 python -m src.prepare
 
-# 3. run tests (42 tests)
+# 3. run tests (45 tests)
 pytest -v
 
 # 4. notebooks, in order
 #    01_data_check → 02_first_backtest → 03_funding → 04_numba_speed
 #    → 05_research_year1 → 06_final_test → 07_report_figures
+#    → 08_v3_trend_year1 → 09_v3_final_test
 ```
 
-## 12. Project structure
+## 14. Project structure
 
 ```
-config.py                     paths, symbols, fees, strategy parameters (v1 and v2)
+config.py                     paths, symbols, fees, strategy parameters (v1, v2, v3)
 requirements.txt              Python dependencies
 pytest.ini                    test settings
 .gitignore                    data/ and caches are not committed
@@ -512,16 +691,17 @@ src/
   funding.py                  funding rates mapped to bars
   engine.py                   reference Python engine (v1)
   engine_numba.py             fast engine (numba): same results as engine.py + optional rules
+                              (loss stop, rolling β, exit_z, trend mode)
   metrics.py                  return, drawdown, Sharpe, trade stats
   research.py                 one evaluation run on year 1
   export.py                   positions in the team format
 
-tests/                        42 tests
+tests/                        45 tests
   test_prepare.py             5m bars: time step, no duplicates, valid OHLC, resampling
   test_signals.py             spread, z-score, no look-ahead, rolling β, hedged spread
   test_costs.py               cost per fill and per round trip
   test_engine.py              hand-calculated trades, end-of-data close, funding
-  test_engine_numba.py        numba = Python engine; loss stop, β leg size, exit_z
+  test_engine_numba.py        numba = Python engine; loss stop, β leg size, exit_z, trend mode
   test_metrics.py             return, drawdown, Sharpe, trade stats, bankrupt → Sharpe NaN
   test_funding.py             rounding to bars, mapping rates to bars
   test_export.py              team output format
@@ -531,13 +711,19 @@ notebooks/
   02_first_backtest.ipynb     v1 backtest: metrics, PnL by exit reason, worst trades, positions_v1
   03_funding.ipynb            funding rates: loading, effect on PnL (+$182 over 2 years)
   04_numba_speed.ipynb        numba engine: same results as Python, 46× faster
-  05_research_year1.ipynb     all experiments on year 1 (4.1–4.6, grid, β, half-life) → choice of v2
+  05_research_year1.ipynb     mean-reversion experiments on year 1 (4.1–4.6, grid, β, half-life) → v2
   06_final_test.ipynb         one-time test of v1 and v2 on year 2, equity charts, positions_v2
   07_report_figures.ipynb     charts for this README (from the research log; no new tuning)
+  08_v3_trend_year1.ipynb     trend-following on year 1: event study, grid, trade checks → v3
+  09_v3_final_test.ipynb      one-time test of v3 on year 2 (with v1, v2), charts, positions_v3
 
 reports/
   figures/                    all charts used in this README
   positions_v1.parquet        v1 positions, team format
   positions_v2.parquet        v2 positions, team format
+  positions_v3.parquet        v3 positions, team format
+  final_test_v1_v2_v3.parquet final-test metrics, all versions, tiers and years
+  trades_v3_year2.parquet     v3 trades on year 2
+  quarters_year2.parquet      quarterly PnL on year 2
   research_log_year1.csv      every variant tried on year 1
 ```
