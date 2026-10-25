@@ -45,3 +45,18 @@ def hedged_spread(close_a: np.ndarray, close_b: np.ndarray, beta: np.ndarray) ->
     r = ra - beta_prev * rb                                      # хеджированная доходность
     r = np.where(np.isnan(r), 0.0, r)                            # пока β не посчитан — 0
     return np.cumsum(r)                                          # накопленная сумма = спред
+
+def efficiency_ratio(spread, lookback):
+    """Efficiency ratio спреда за последние `lookback` свечей.
+
+    ER = |s_t − s_(t−lookback)| / сумма |s_i − s_(i−1)| за последние `lookback` шагов.
+    1 — движение по прямой (тренд), около 0 — ходит туда-сюда.
+    Использует только прошлое; первые `lookback` значений — NaN.
+    """
+    s = np.asarray(spread, dtype=np.float64)
+    step = np.abs(np.diff(s, prepend=np.nan))                              # |s_t − s_(t−1)|, первое значение NaN
+    path = pl.Series(step).fill_nan(None).rolling_sum(lookback).to_numpy() # весь путь за последние lookback шагов
+    net = np.full(len(s), np.nan)
+    net[lookback:] = np.abs(s[lookback:] - s[:-lookback])                  # чистое движение за lookback свечей
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return net / path

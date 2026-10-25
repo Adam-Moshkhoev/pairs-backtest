@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.signals import log_spread, rolling_zscore, rolling_beta, hedged_spread
+from src.signals import log_spread, rolling_zscore, rolling_beta, hedged_spread, efficiency_ratio
 
 # Спред = ln(ETH) − beta·ln(BTC) на ценах, где ln считается в уме.
 # beta=1 → [1, 1], beta=2 → [1, 0]: формула верна и beta работает.
@@ -58,3 +58,39 @@ def test_hedged_spread_beta_one_equals_log_spread():
     new = hedged_spread(close_a, close_b, np.ones(300))
     old = log_spread(close_a, close_b)
     assert np.allclose(new, old - old[0])
+
+
+# ── Efficiency ratio (индикатор режима для v4) ──
+
+# Спред 0 → 1 → 3 → 2 → 4, окно 2:
+# t=2: движение |3−0| = 3, путь 1+2 = 3 → 1.0
+# t=3: движение |2−1| = 1, путь 2+1 = 3 → 1/3
+# t=4: движение |4−3| = 1, путь 1+2 = 3 → 1/3
+def test_efficiency_ratio_hand_example():
+    er = efficiency_ratio(np.array([0.0, 1.0, 3.0, 2.0, 4.0]), 2)
+    assert np.isnan(er[0]) and np.isnan(er[1])          # разогрев: первые 2 — NaN
+    np.testing.assert_allclose(er[2:], [1.0, 1 / 3, 1 / 3])
+
+
+# Движение по прямой → ER = 1 (чистый тренд)
+def test_efficiency_ratio_straight_line_is_one():
+    er = efficiency_ratio(0.01 * np.arange(20.0), 5)
+    assert np.isnan(er[:5]).all()
+    np.testing.assert_allclose(er[5:], 1.0)
+
+
+# Туда-сюда 0, 1, 0, 1 … → чистое движение 0 → ER = 0
+def test_efficiency_ratio_zigzag_is_zero():
+    er = efficiency_ratio(np.array([0.0, 1.0] * 10), 4)
+    np.testing.assert_allclose(er[4:], 0.0)
+
+
+# Меняем только будущее (с t=200) → ER на прошлых свечах не меняется
+def test_efficiency_ratio_no_look_ahead():
+    rng = np.random.default_rng(0)
+    s = np.cumsum(rng.normal(size=300))
+    er = efficiency_ratio(s, 50)
+    s_changed = s.copy()
+    s_changed[200:] += 10.0
+    er_changed = efficiency_ratio(s_changed, 50)
+    np.testing.assert_allclose(er[:200], er_changed[:200])

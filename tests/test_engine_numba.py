@@ -23,7 +23,7 @@ def _same(a, b):
         assert ta["funding"] == pytest.approx(tb["funding"])
 
 
-# ── Старые тесты: numba = Python ──
+# ── numba = Python ──
 
 # Маленький ручной пример из test_engine
 def test_small_case_same_as_python():
@@ -65,7 +65,7 @@ def test_end_of_data_same_as_python():
     _same(py, nb)
 
 
-# ── Новые тесты: стоп по убытку (4.1) ──
+# ── Стоп по убытку (4.1) ──
 
 # Стоп по деньгам: шорт, ETH растёт → на t=2 убыток $212 > $150 → выход на open t=3
 def test_loss_stop():
@@ -106,6 +106,9 @@ def test_loss_pct_same_as_dollars():
     assert usd["trades"][0]["reason"] == "loss"             # вышли именно по loss
     assert usd["trades"] == pct["trades"]                   # оба способа дали одинаковую сделку
 
+
+# ── Скользящий β (4.5) ──
+
 # beta = все 1 → ровно v1
 def test_beta_one_equals_v1():
     args = make_case()
@@ -133,6 +136,9 @@ def test_beta_leg_size():
     assert t["exit_t"] == 4
     assert t["pnl"] == pytest.approx(50.192)
 
+
+# ── Выход раньше нуля (4.6) ──
+
 # exit_z = 0 → ровно v1
 def test_exit_z_zero_equals_v1():
     args = make_case()
@@ -158,6 +164,8 @@ def test_exit_z_early_exit():
     late = run_backtest_fast(*args, "regular", exit_z=0.0)["trades"][0]
     assert late["reason"] == "end"                         # z до 0 не дошёл → закрыли в конце данных
 
+
+# ── Тренд (v3) ──
 
 # trend = False → ровно v1
 def test_trend_false_equals_v1():
@@ -197,3 +205,47 @@ def test_trend_has_no_z_stop():
     follow = run_backtest_fast(*args, "regular", trend=True)["trades"][0]
     assert revert["reason"] == "stop"                       # возврат: |z| = 5 > 4 → стоп
     assert follow["reason"] == "end"                        # тренд: держим до конца данных
+
+
+# ── Разрешение входа по режиму (v4) ──
+
+def _flat_market(z):
+    """Постоянные цены, торговля разрешена везде — для проверки логики входа и выхода."""
+    n = len(z)
+    return dict(open_a=np.full(n, 2500.0), open_b=np.full(n, 62500.0),
+                close_a=np.full(n, 2500.0), close_b=np.full(n, 62500.0),
+                tradable=np.ones(n, dtype=bool), z=np.asarray(z, dtype=float))
+
+
+# allow_entry = все True → ровно как без него
+def test_allow_entry_all_true_equals_default():
+    rng = np.random.default_rng(1)
+    n = 2000
+    a = 2500 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))
+    b = 62500 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))
+    z = rng.normal(0, 1.5, n)
+    tradable = np.ones(n, dtype=bool)
+    base = run_backtest_fast(a, b, a, b, tradable, z, "vip7")
+    allowed = run_backtest_fast(a, b, a, b, tradable, z, "vip7", allow_entry=np.ones(n, dtype=bool))
+    np.testing.assert_array_equal(base["equity"], allowed["equity"])
+    assert base["trades"] == allowed["trades"]
+
+
+# allow_entry = все False → ни одной сделки
+def test_allow_entry_false_blocks_entry():
+    m = _flat_market([0.0, 2.5, 2.5, 0.0, 0.0])
+    res = run_backtest_fast(**m, tier="vip7", allow_entry=np.zeros(5, dtype=bool))
+    assert res["trades"] == []
+    assert (res["qty_a"] == 0).all()
+
+
+# вход разрешён только на свече 1 (решение), дальше запрещён — но выход всё равно случается
+def test_allow_entry_does_not_block_exit():
+    m = _flat_market([0.0, 2.5, 2.5, 0.0, 0.0])
+    allow = np.array([False, True, False, False, False])
+    res = run_backtest_fast(**m, tier="vip7", allow_entry=allow)
+    assert len(res["trades"]) == 1
+    t = res["trades"][0]
+    assert t["entry_t"] == 2              # решение на свече 1 → вход на открытии свечи 2
+    assert t["exit_t"] == 4               # z = 0 на свече 3 → выход на открытии свечи 4
+    assert t["reason"] == "mean"
