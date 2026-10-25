@@ -157,3 +157,43 @@ def test_exit_z_early_exit():
 
     late = run_backtest_fast(*args, "regular", exit_z=0.0)["trades"][0]
     assert late["reason"] == "end"                         # z до 0 не дошёл → закрыли в конце данных
+
+
+# trend = False → ровно v1
+def test_trend_false_equals_v1():
+    args = make_case()
+    _same(run_backtest(*args, "regular"), run_backtest_fast(*args, "regular", trend=False))
+
+
+# тренд: z = 2.5 → ЛОНГ спреда; ETH растёт; z падает до 0.4 ≤ exit_z = 0.5 → выход "fade"
+def test_trend_long_and_fade_exit():
+    z        = np.array([1.0, 2.5, 2.6, 0.4, 0.3])
+    open_a   = np.array([2500, 2500, 2500, 2550, 2600], dtype=float)
+    close_a  = open_a.copy()
+    open_b   = np.full(5, 62500.0)
+    close_b  = open_b.copy()
+    tradable = np.full(5, True)
+
+    res = run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, "regular",
+                            exit_z=0.5, trend=True)
+    t = res["trades"][0]
+    assert res["qty_a"][2] == pytest.approx(4.0)            # лонг ETH: 10 000 / 2 500
+    assert res["qty_b"][2] == pytest.approx(-0.16)          # шорт BTC: 10 000 / 62 500
+    assert t["direction"] == 1                              # лонг спреда
+    assert t["reason"] == "fade"
+    assert t["exit_t"] == 4
+    assert t["pnl"] == pytest.approx(375.76)                # +400 − 12 − 12.24
+
+
+# большой |z| закрывает сделку возврата (stop), но НЕ закрывает трендовую
+def test_trend_has_no_z_stop():
+    z        = np.array([1.0, 2.5, 5.0, 5.0, 5.0])
+    prices   = np.full(5, 2500.0)
+    btc      = np.full(5, 62500.0)
+    tradable = np.full(5, True)
+    args = (prices, btc, prices, btc, tradable, z)
+
+    revert = run_backtest_fast(*args, "regular", trend=False)["trades"][0]
+    follow = run_backtest_fast(*args, "regular", trend=True)["trades"][0]
+    assert revert["reason"] == "stop"                       # возврат: |z| = 5 > 4 → стоп
+    assert follow["reason"] == "end"                        # тренд: держим до конца данных

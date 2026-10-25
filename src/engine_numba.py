@@ -2,25 +2,27 @@ import numpy as np
 from numba import njit
 import config
 
-REASONS = {1: "mean", 2: "stop", 3: "time", 4: "end", 5: "loss"}     # код причины → текст (для обёртки)
+REASONS = {1: "mean", 2: "stop", 3: "time", 4: "end", 5: "loss", 6: "fade"}   # код причины → текст
 
 
 @njit
 def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, beta,
           fee_frac, notional, capital, entry_z, stop_z, max_hold,
-          max_loss, max_loss_pct, exit_z):
+          max_loss, max_loss_pct, exit_z, trend):
     n = len(z)
 
     # Состояние
     cash = capital
-    position = 0
+    position = 0             # направление позиции: +1 лонг спреда, −1 шорт спреда, 0 — нет позиции
     qty_a = 0.0
     qty_b = 0.0
     bars_held = 0
     paused = False
     plan_action = 0          # 0 — нет плана, 1 — вход, 2 — выход
-    plan_value = 0           # вход: направление ±1; выход: код причины 1, 2, 3, 5
+    plan_value = 0           # вход: направление ±1; выход: код причины
     plan_beta = 1.0          # β, зафиксированный в момент решения о входе
+    plan_side = 0            # с какой стороны был z при решении о входе: +1 (z > entry_z) или −1
+    entry_side = 0           # то же для открытой позиции
 
     # Результаты по свечам
     equity = np.zeros(n)
@@ -55,6 +57,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
                 cash -= abs(qty_a) * open_a[t] * fee_frac    # как fill_cost
                 cash -= abs(qty_b) * open_b[t] * fee_frac    # как fill_cost
                 position = plan_value
+                entry_side = plan_side                       # запомнили, с какой стороны был сигнал
                 bars_held = 0
                 tr_entry[k] = t
                 tr_dir[k] = plan_value
@@ -69,6 +72,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
                 if plan_value == 2 or plan_value == 3 or plan_value == 5:   # stop, time или loss → пауза
                     paused = True
                 position = 0
+                entry_side = 0
                 qty_a = 0.0
                 qty_b = 0.0
             plan_action = 0
@@ -88,12 +92,15 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
                 if max_loss_pct > 0:
                     limit = max_loss_pct * tr_cash_before[k - 1]     # вариант 2: % от капитала при входе
 
-                # порядок выхода: mean → stop → loss → time
-                # mean: шорт спреда выходит при z ≤ exit_z, лонг — при z ≥ −exit_z
-                if (position == -1 and z[t] <= exit_z) or (position == 1 and z[t] >= -exit_z):
-                    plan_action, plan_value = 2, 1                   # mean
-                elif abs(z[t]) > stop_z:
-                    plan_action, plan_value = 2, 2                   # stop
+                # z вернулся к exit_z со стороны сигнала: сигнал сверху → z ≤ exit_z, снизу → z ≥ −exit_z
+                came_back = (entry_side == 1 and z[t] <= exit_z) or (entry_side == -1 and z[t] >= -exit_z)
+
+                # порядок выхода: mean/fade → stop → loss → time
+                if came_back:
+                    plan_action = 2
+                    plan_value = 6 if trend else 1                   # тренд: движение затухло; возврат: спред вернулся
+                elif not trend and abs(z[t]) > stop_z:
+                    plan_action, plan_value = 2, 2                   # stop (только для возврата)
                 elif limit > 0 and equity[t] - tr_cash_before[k - 1] < -limit:
                     plan_action, plan_value = 2, 5                   # loss
                 elif bars_held >= max_hold:
@@ -102,13 +109,16 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
                 if paused and abs(z[t]) < entry_z:
                     paused = False
                 if not paused and not np.isnan(beta[t]):             # без β не входим
-                    # как entry_signal
+                    side = 0
                     if z[t] > entry_z:
-                        plan_action, plan_value = 1, -1
-                        plan_beta = beta[t]                          # β фиксируется на всю сделку
+                        side = 1                                     # спред необычно высоко
                     elif z[t] < -entry_z:
-                        plan_action, plan_value = 1, 1
-                        plan_beta = beta[t]
+                        side = -1                                    # спред необычно низко
+                    if side != 0:
+                        plan_action = 1
+                        plan_value = side if trend else -side        # тренд: по движению; возврат: против
+                        plan_side = side
+                        plan_beta = beta[t]                          # β фиксируется на всю сделку
 
     # ── Закрыть открытую позицию в конце данных ──
     if position != 0:
@@ -128,7 +138,7 @@ def _core(open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b, b
 def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
                       funding_a=None, funding_b=None,
                       entry_z=config.ENTRY_Z, stop_z=config.STOP_Z, max_hold=config.MAX_HOLD_BARS,
-                      max_loss=0.0, max_loss_pct=0.0, beta=None, exit_z=0.0):
+                      max_loss=0.0, max_loss_pct=0.0, beta=None, exit_z=0.0, trend=False):
     """То же, что run_backtest, но цикл скомпилирован numba. Результат в том же формате.
 
     По умолчанию все дополнительные правила выключены → результат как у v1.
@@ -136,8 +146,9 @@ def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
     max_loss     — стоп по убытку в $ (например 200.0); 0 = выключен
     max_loss_pct — стоп по убытку в % от капитала при входе (0.01 = 1%); 0 = выключен
     beta         — массив β на каждой свече, нога BTC = β × NOTIONAL; None = β = 1
-    exit_z       — выход по mean, когда z вернулся до exit_z (шорт: z ≤ exit_z, лонг: z ≥ −exit_z);
-                   0 = выход при z = 0
+    exit_z       — выход, когда z вернулся до exit_z со стороны сигнала; 0 = выход при z = 0
+    trend        — False: возврат к среднему (против движения, со стопом |z| > stop_z);
+                   True: тренд (по движению, без стопа по z, выход «fade» при затухании)
     """
     n = len(z)
     if funding_a is None:
@@ -152,7 +163,7 @@ def run_backtest_fast(open_a, open_b, close_a, close_b, tradable, z, tier,
         open_a, open_b, close_a, close_b, tradable, z, funding_a, funding_b,
         np.asarray(beta, dtype=np.float64),                  # numba нужен float-массив
         fee_frac, config.NOTIONAL, config.CAPITAL, entry_z, stop_z, max_hold,
-        float(max_loss), float(max_loss_pct), float(exit_z))     # float → одна компиляция numba
+        float(max_loss), float(max_loss_pct), float(exit_z), bool(trend))   # фиксированные типы → одна компиляция
 
     trades = [
         {"entry_t": int(e[i]), "exit_t": int(x[i]), "direction": int(d[i]),

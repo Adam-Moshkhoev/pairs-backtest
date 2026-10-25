@@ -12,7 +12,8 @@ def evaluate(df, fa, fb, end,
              max_loss: float = 0.0,                 # стоп по убытку в $ (0 = выкл)
              max_loss_pct: float = 0.0,             # стоп по убытку в % капитала (0 = выкл)
              beta_window: int = 0,                  # окно скользящего β (0 = β = 1)
-             exit_z: float = 0.0,                   # выход по mean при |z| ≤ exit_z (0 = при z = 0)
+             exit_z: float = 0.0,                   # выход, когда z вернулся до exit_z (0 = при z = 0)
+             trend: bool = False,                   # True — трендовая версия (v3): вход по движению, выход «fade»
              tier: str = "vip7") -> dict:
     """Один прогон стратегии на свечах [0, end) → словарь метрик + параметры.
 
@@ -41,11 +42,11 @@ def evaluate(df, fa, fb, end,
         entry_z=entry_z, stop_z=stop_z, max_hold=max_hold,
         max_loss=max_loss, max_loss_pct=max_loss_pct,
         beta=None if beta is None else beta[cut],
-        exit_z=exit_z)
+        exit_z=exit_z, trend=trend)
 
     out = summary(res)
     out.update({"window": window, "entry_z": entry_z, "stop_z": stop_z,
                 "max_hold": max_hold, "max_loss": max_loss,
                 "max_loss_pct": max_loss_pct, "beta_window": beta_window,
-                "exit_z": exit_z, "tier": tier})              # параметры прогона → в журнал
+                "exit_z": exit_z, "trend": trend, "tier": tier})   # параметры прогона → в журнал
     return out
